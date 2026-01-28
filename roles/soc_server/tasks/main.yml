@@ -1,0 +1,67 @@
+---
+# SOC/Monitoring Server Setup Tasks
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install monitoring and security tools
+  apt:
+    name:
+      - rsyslog
+      - tcpdump
+      - wireshark-common
+      - tshark
+      - nmap
+      - netcat-openbsd
+      - htop
+      - iftop
+      - fail2ban
+    state: present
+
+- name: Configure rsyslog for remote logging
+  copy:
+    content: |
+      # Accept logs from remote systems
+      module(load="imudp")
+      input(type="imudp" port="514")
+      
+      module(load="imtcp")
+      input(type="imtcp" port="514")
+      
+      # Store logs by hostname
+      $template RemoteLogs,"/var/log/remote/%HOSTNAME%/%PROGRAMNAME%.log"
+      *.* ?RemoteLogs
+    dest: /etc/rsyslog.d/50-remote.conf
+  notify: restart rsyslog
+
+- name: Create remote log directory
+  file:
+    path: /var/log/remote
+    state: directory
+    mode: '0755'
+
+- name: Start and enable rsyslog
+  systemd:
+    name: rsyslog
+    state: started
+    enabled: yes
+
+- name: Start and enable fail2ban
+  systemd:
+    name: fail2ban
+    state: started
+    enabled: yes
+
+- name: Configure firewall
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+  loop:
+    - "22"
+    - "514"
+
+- name: Enable firewall
+  ufw:
+    state: enabled

@@ -1,0 +1,49 @@
+---
+# Database Server Setup Tasks
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install MySQL server
+  apt:
+    name:
+      - mysql-server
+      - python3-pymysql
+    state: present
+
+- name: Start and enable MySQL
+  systemd:
+    name: mysql
+    state: started
+    enabled: yes
+
+- name: Set MySQL root password
+  mysql_user:
+    name: root
+    password: "{{ mysql_root_password }}"
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+    host: localhost
+    state: present
+  ignore_errors: yes
+
+- name: Create application database
+  mysql_db:
+    name: ccdc_app
+    state: present
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+  ignore_errors: yes
+
+- name: Configure firewall
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+  loop:
+    - "22"
+    - "3306"
+
+- name: Enable firewall
+  ufw:
+    state: enabled

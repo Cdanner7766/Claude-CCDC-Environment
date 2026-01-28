@@ -1,0 +1,55 @@
+---
+# File Server Setup Tasks
+
+- name: Set static IP address
+  win_shell: |
+    New-NetIPAddress -InterfaceAlias "Ethernet" -IPAddress {{ ansible_host }} -PrefixLength 24 -DefaultGateway 10.10.10.1 -ErrorAction SilentlyContinue
+    Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses 10.10.10.10
+  ignore_errors: yes
+
+- name: Wait for domain controller
+  win_wait_for:
+    host: 10.10.10.10
+    port: 389
+    timeout: 300
+
+- name: Join domain
+  win_domain_membership:
+    dns_domain_name: "{{ domain_name }}"
+    domain_admin_user: "Administrator@{{ domain_name }}"
+    domain_admin_password: "{{ domain_admin_password }}"
+    state: domain
+  register: domain_join
+
+- name: Reboot after domain join
+  win_reboot:
+  when: domain_join.reboot_required
+
+- name: Install File Server features
+  win_feature:
+    name:
+      - FS-FileServer
+      - FS-Resource-Manager
+    include_management_tools: yes
+
+- name: Create share directories
+  win_file:
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - C:\Shares\CompanyData
+    - C:\Shares\IT
+    - C:\Shares\HR
+
+- name: Create SMB shares
+  win_share:
+    name: "{{ item.name }}"
+    path: "{{ item.path }}"
+    description: "{{ item.description }}"
+    full: "Domain Admins"
+    change: "Domain Users"
+    state: present
+  loop:
+    - { name: "CompanyData", path: "C:\\Shares\\CompanyData", description: "Company shared files" }
+    - { name: "IT", path: "C:\\Shares\\IT", description: "IT department files" }
+    - { name: "HR", path: "C:\\Shares\\HR", description: "Human Resources files" }

@@ -1,0 +1,5 @@
+---
+# Default variables for domain_member role
+
+domain_name: "blue.lab"
+domain_admin_password: "P@ssw0rd123!SafeMode"

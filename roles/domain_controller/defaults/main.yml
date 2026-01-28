@@ -1,0 +1,42 @@
+---
+# Default variables for domain_controller role
+
+domain_name: "blue.lab"
+safe_mode_password: "P@ssw0rd123!SafeMode"
+
+domain_users:
+  - name: "jsmith"
+    firstname: "John"
+    surname: "Smith"
+    password: "Summer2024!"
+    groups: ["Domain Users"]
+  - name: "mjones"
+    firstname: "Mary"
+    surname: "Jones"
+    password: "Winter2024!"
+    groups: ["Domain Users"]
+  - name: "bwilliams"
+    firstname: "Bob"
+    surname: "Williams"
+    password: "Spring2024!"
+    groups: ["Domain Users"]
+  - name: "tdavis"
+    firstname: "Tom"
+    surname: "Davis"
+    password: "Fall2024!"
+    groups: ["Domain Users"]
+  - name: "kbrown"
+    firstname: "Kim"
+    surname: "Brown"
+    password: "Autumn2024!"
+    groups: ["Domain Users"]
+  - name: "lmiller"
+    firstname: "Lisa"
+    surname: "Miller"
+    password: "Seasons2024!"
+    groups: ["Domain Users"]
+  - name: "DomainAdmin"
+    firstname: "Domain"
+    surname: "Administrator"
+    password: "P@ssw0rd123!"
+    groups: ["Domain Admins", "Enterprise Admins"]

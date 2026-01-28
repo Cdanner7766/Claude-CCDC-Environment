@@ -1,0 +1,7 @@
+---
+# Handlers for soc_server role
+
+- name: restart rsyslog
+  systemd:
+    name: rsyslog
+    state: restarted

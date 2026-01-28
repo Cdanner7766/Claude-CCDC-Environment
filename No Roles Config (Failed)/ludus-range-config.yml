@@ -1,0 +1,648 @@
+ludus:
+  # =============================================================================
+  # WINDOWS SERVER 2019 DOMAIN CONTROLLER (DC01)
+  # =============================================================================
+  - vm_name: "{{ range_id }}-dc-01"
+    hostname: "DC01"
+    template: win2019-server-x64-template
+    vlan: 10
+    ip_last_octet: 10
+    ram_gb: 4
+    cpus: 2
+    windows:
+      sysprep: true
+    ansible_groups:
+      - windows
+      - domain_controllers
+    testing:
+      snapshot: false
+      block_internet: false
+    
+    # Domain Controller Configuration
+    tasks:
+      - name: Set static IP address
+        win_shell: |
+          New-NetIPAddress -InterfaceAlias "Ethernet" -IPAddress 10.10.10.10 -PrefixLength 24 -DefaultGateway 10.10.10.1
+          Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses 127.0.0.1,8.8.8.8
+        ignore_errors: yes
+      
+      - name: Set computer name
+        win_hostname:
+          name: DC01
+        register: hostname_result
+      
+      - name: Reboot if hostname changed
+        win_reboot:
+        when: hostname_result.reboot_required
+      
+      - name: Install AD Domain Services
+        win_feature:
+          name: AD-Domain-Services
+          include_management_tools: yes
+          include_sub_features: yes
+        register: ad_install
+      
+      - name: Install DNS Server
+        win_feature:
+          name: DNS
+          include_management_tools: yes
+      
+      - name: Install RSAT Tools
+        win_feature:
+          name:
+            - RSAT-AD-PowerShell
+            - RSAT-AD-AdminCenter
+            - RSAT-ADDS-Tools
+            - RSAT-DNS-Server
+      
+      - name: Promote to Domain Controller
+        win_domain_controller:
+          dns_domain_name: blue.lab
+          domain_admin_user: "Administrator@blue.lab"
+          safe_mode_password: "P@ssw0rd123!SafeMode"
+          state: domain_controller
+        register: dc_promotion
+      
+      - name: Reboot after DC promotion
+        win_reboot:
+          reboot_timeout: 600
+        when: dc_promotion.reboot_required
+      
+      - name: Wait for Active Directory Web Services
+        win_shell: |
+          $timeout = 300
+          $elapsed = 0
+          while ((Get-Service ADWS).Status -ne 'Running' -and $elapsed -lt $timeout) {
+            Start-Sleep -Seconds 5
+            $elapsed += 5
+          }
+        ignore_errors: yes
+      
+      - name: Create Domain Users
+        win_domain_user:
+          name: "{{ item.name }}"
+          firstname: "{{ item.firstname }}"
+          surname: "{{ item.surname }}"
+          password: "{{ item.password }}"
+          state: present
+          enabled: yes
+          password_never_expires: no
+          user_cannot_change_password: no
+          groups: "{{ item.groups | default(['Domain Users']) }}"
+        loop:
+          - { name: "jsmith", firstname: "John", surname: "Smith", password: "Summer2024!", groups: ["Domain Users"] }
+          - { name: "mjones", firstname: "Mary", surname: "Jones", password: "Winter2024!", groups: ["Domain Users"] }
+          - { name: "bwilliams", firstname: "Bob", surname: "Williams", password: "Spring2024!", groups: ["Domain Users"] }
+          - { name: "tdavis", firstname: "Tom", surname: "Davis", password: "Fall2024!", groups: ["Domain Users"] }
+          - { name: "kbrown", firstname: "Kim", surname: "Brown", password: "Autumn2024!", groups: ["Domain Users"] }
+          - { name: "lmiller", firstname: "Lisa", surname: "Miller", password: "Seasons2024!", groups: ["Domain Users"] }
+      
+      - name: Create Domain Admin account
+        win_domain_user:
+          name: "DomainAdmin"
+          firstname: "Domain"
+          surname: "Administrator"
+          password: "P@ssw0rd123!"
+          state: present
+          enabled: yes
+          groups:
+            - Domain Admins
+            - Enterprise Admins
+      
+      - name: Configure DNS Forwarders
+        win_shell: |
+          Add-DnsServerForwarder -IPAddress 8.8.8.8
+          Add-DnsServerForwarder -IPAddress 8.8.4.4
+        ignore_errors: yes
+
+  # =============================================================================
+  # WINDOWS SERVER 2019 FILE SERVER (FS01)
+  # =============================================================================
+  - vm_name: "{{ range_id }}-fs-01"
+    hostname: "FS01"
+    template: win2019-server-x64-template
+    vlan: 10
+    ip_last_octet: 20
+    ram_gb: 4
+    cpus: 2
+    windows:
+      sysprep: true
+    ansible_groups:
+      - windows
+      - file_servers
+    testing:
+      snapshot: false
+      block_internet: false
+    
+    tasks:
+      - name: Set static IP address
+        win_shell: |
+          New-NetIPAddress -InterfaceAlias "Ethernet" -IPAddress 10.10.10.20 -PrefixLength 24 -DefaultGateway 10.10.10.1
+          Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses 10.10.10.10
+        ignore_errors: yes
+      
+      - name: Set computer name
+        win_hostname:
+          name: FS01
+        register: hostname_result
+      
+      - name: Reboot if hostname changed
+        win_reboot:
+        when: hostname_result.reboot_required
+      
+      - name: Wait for domain controller
+        win_wait_for:
+          host: 10.10.10.10
+          port: 389
+          timeout: 300
+      
+      - name: Join domain
+        win_domain_membership:
+          dns_domain_name: blue.lab
+          domain_admin_user: "Administrator@blue.lab"
+          domain_admin_password: "P@ssw0rd123!SafeMode"
+          state: domain
+        register: domain_join
+      
+      - name: Reboot after domain join
+        win_reboot:
+        when: domain_join.reboot_required
+      
+      - name: Install File Server features
+        win_feature:
+          name:
+            - FS-FileServer
+            - FS-Resource-Manager
+          include_management_tools: yes
+      
+      - name: Create share directories
+        win_file:
+          path: "{{ item }}"
+          state: directory
+        loop:
+          - C:\Shares\CompanyData
+          - C:\Shares\IT
+          - C:\Shares\HR
+      
+      - name: Create SMB shares
+        win_share:
+          name: "{{ item.name }}"
+          path: "{{ item.path }}"
+          description: "{{ item.description }}"
+          full: "Domain Admins"
+          change: "Domain Users"
+          state: present
+        loop:
+          - { name: "CompanyData", path: "C:\\Shares\\CompanyData", description: "Company shared files" }
+          - { name: "IT", path: "C:\\Shares\\IT", description: "IT department files" }
+          - { name: "HR", path: "C:\\Shares\\HR", description: "Human Resources files" }
+
+  # =============================================================================
+  # WINDOWS 10 WORKSTATION 1 (WS01)
+  # =============================================================================
+  - vm_name: "{{ range_id }}-ws-01"
+    hostname: "WS01"
+    template: win10-22h2-x64-enterprise-template
+    vlan: 10
+    ip_last_octet: 101
+    ram_gb: 4
+    cpus: 2
+    windows:
+      sysprep: true
+    ansible_groups:
+      - windows
+      - workstations
+    testing:
+      snapshot: false
+      block_internet: false
+    
+    tasks:
+      - name: Set static IP address
+        win_shell: |
+          New-NetIPAddress -InterfaceAlias "Ethernet" -IPAddress 10.10.10.101 -PrefixLength 24 -DefaultGateway 10.10.10.1
+          Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses 10.10.10.10
+        ignore_errors: yes
+      
+      - name: Set computer name
+        win_hostname:
+          name: WS01
+        register: hostname_result
+      
+      - name: Reboot if hostname changed
+        win_reboot:
+        when: hostname_result.reboot_required
+      
+      - name: Wait for domain controller
+        win_wait_for:
+          host: 10.10.10.10
+          port: 389
+          timeout: 300
+      
+      - name: Join domain
+        win_domain_membership:
+          dns_domain_name: blue.lab
+          domain_admin_user: "Administrator@blue.lab"
+          domain_admin_password: "P@ssw0rd123!SafeMode"
+          state: domain
+        register: domain_join
+      
+      - name: Reboot after domain join
+        win_reboot:
+        when: domain_join.reboot_required
+
+  # =============================================================================
+  # WINDOWS 10 WORKSTATION 2 (WS02)
+  # =============================================================================
+  - vm_name: "{{ range_id }}-ws-02"
+    hostname: "WS02"
+    template: win10-22h2-x64-enterprise-template
+    vlan: 10
+    ip_last_octet: 102
+    ram_gb: 4
+    cpus: 2
+    windows:
+      sysprep: true
+    ansible_groups:
+      - windows
+      - workstations
+    testing:
+      snapshot: false
+      block_internet: false
+    
+    tasks:
+      - name: Set static IP address
+        win_shell: |
+          New-NetIPAddress -InterfaceAlias "Ethernet" -IPAddress 10.10.10.102 -PrefixLength 24 -DefaultGateway 10.10.10.1
+          Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses 10.10.10.10
+        ignore_errors: yes
+      
+      - name: Set computer name
+        win_hostname:
+          name: WS02
+        register: hostname_result
+      
+      - name: Reboot if hostname changed
+        win_reboot:
+        when: hostname_result.reboot_required
+      
+      - name: Wait for domain controller
+        win_wait_for:
+          host: 10.10.10.10
+          port: 389
+          timeout: 300
+      
+      - name: Join domain
+        win_domain_membership:
+          dns_domain_name: blue.lab
+          domain_admin_user: "Administrator@blue.lab"
+          domain_admin_password: "P@ssw0rd123!SafeMode"
+          state: domain
+        register: domain_join
+      
+      - name: Reboot after domain join
+        win_reboot:
+        when: domain_join.reboot_required
+
+  # =============================================================================
+  # UBUNTU 22.04 WEB SERVER (web01)
+  # =============================================================================
+  - vm_name: "{{ range_id }}-web-01"
+    hostname: "web01"
+    template: debian-12-x64-server-template
+    vlan: 10
+    ip_last_octet: 30
+    ram_gb: 2
+    cpus: 2
+    linux: true
+    ansible_groups:
+      - linux
+      - web_servers
+    testing:
+      snapshot: false
+      block_internet: false
+    
+    tasks:
+      - name: Update apt cache
+        apt:
+          update_cache: yes
+          cache_valid_time: 3600
+      
+      - name: Install Apache web server
+        apt:
+          name:
+            - apache2
+            - php
+            - libapache2-mod-php
+          state: present
+      
+      - name: Start and enable Apache
+        systemd:
+          name: apache2
+          state: started
+          enabled: yes
+      
+      - name: Create default web page
+        copy:
+          content: |
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Blue Team CCDC Lab - Web Server</title>
+            </head>
+            <body>
+                <h1>Welcome to the Blue Team CCDC Practice Environment</h1>
+                <p>Web Server: web01.blue.lab</p>
+                <p>This is a training environment for cybersecurity competitions.</p>
+                <?php phpinfo(); ?>
+            </body>
+            </html>
+          dest: /var/www/html/index.php
+      
+      - name: Configure firewall
+        ufw:
+          rule: allow
+          port: "{{ item }}"
+        loop:
+          - "22"
+          - "80"
+          - "443"
+      
+      - name: Enable firewall
+        ufw:
+          state: enabled
+
+  # =============================================================================
+  # UBUNTU 22.04 DATABASE SERVER (db01)
+  # =============================================================================
+  - vm_name: "{{ range_id }}-db-01"
+    hostname: "db01"
+    template: debian-12-x64-server-template
+    vlan: 10
+    ip_last_octet: 40
+    ram_gb: 4
+    cpus: 2
+    linux: true
+    ansible_groups:
+      - linux
+      - database_servers
+    testing:
+      snapshot: false
+      block_internet: false
+    
+    tasks:
+      - name: Update apt cache
+        apt:
+          update_cache: yes
+          cache_valid_time: 3600
+      
+      - name: Install MySQL server
+        apt:
+          name:
+            - mysql-server
+            - python3-pymysql
+          state: present
+      
+      - name: Start and enable MySQL
+        systemd:
+          name: mysql
+          state: started
+          enabled: yes
+      
+      - name: Set MySQL root password
+        mysql_user:
+          name: root
+          password: "MySQLR00t!"
+          login_unix_socket: /var/run/mysqld/mysqld.sock
+          host: localhost
+          state: present
+      
+      - name: Create application database
+        mysql_db:
+          name: ccdc_app
+          state: present
+          login_user: root
+          login_password: "MySQLR00t!"
+      
+      - name: Configure firewall
+        ufw:
+          rule: allow
+          port: "{{ item }}"
+        loop:
+          - "22"
+          - "3306"
+      
+      - name: Enable firewall
+        ufw:
+          state: enabled
+
+  # =============================================================================
+  # UBUNTU 22.04 SOC/MONITORING SERVER (soc01)
+  # =============================================================================
+  - vm_name: "{{ range_id }}-soc-01"
+    hostname: "soc01"
+    template: debian-12-x64-server-template
+    vlan: 10
+    ip_last_octet: 50
+    ram_gb: 4
+    cpus: 2
+    linux: true
+    ansible_groups:
+      - linux
+      - soc_servers
+    testing:
+      snapshot: false
+      block_internet: false
+    
+    tasks:
+      - name: Update apt cache
+        apt:
+          update_cache: yes
+          cache_valid_time: 3600
+      
+      - name: Install monitoring and security tools
+        apt:
+          name:
+            - rsyslog
+            - tcpdump
+            - wireshark-common
+            - tshark
+            - nmap
+            - netcat-openbsd
+            - htop
+            - iftop
+            - fail2ban
+          state: present
+      
+      - name: Configure rsyslog for remote logging
+        copy:
+          content: |
+            # Accept logs from remote systems
+            module(load="imudp")
+            input(type="imudp" port="514")
+            
+            module(load="imtcp")
+            input(type="imtcp" port="514")
+            
+            # Store logs by hostname
+            $template RemoteLogs,"/var/log/remote/%HOSTNAME%/%PROGRAMNAME%.log"
+            *.* ?RemoteLogs
+          dest: /etc/rsyslog.d/50-remote.conf
+        notify: restart rsyslog
+      
+      - name: Create remote log directory
+        file:
+          path: /var/log/remote
+          state: directory
+          mode: '0755'
+      
+      - name: Start and enable rsyslog
+        systemd:
+          name: rsyslog
+          state: started
+          enabled: yes
+      
+      - name: Start and enable fail2ban
+        systemd:
+          name: fail2ban
+          state: started
+          enabled: yes
+      
+      - name: Configure firewall
+        ufw:
+          rule: allow
+          port: "{{ item }}"
+        loop:
+          - "22"
+          - "514"
+      
+      - name: Enable firewall
+        ufw:
+          state: enabled
+    
+    handlers:
+      - name: restart rsyslog
+        systemd:
+          name: rsyslog
+          state: restarted
+
+  # =============================================================================
+  # DEBIAN ROUTER/GATEWAY (router01)
+  # =============================================================================
+  - vm_name: "{{ range_id }}-router-01"
+    hostname: "router01"
+    template: debian-12-x64-server-template
+    vlan: 10
+    ip_last_octet: 1
+    ram_gb: 2
+    cpus: 1
+    linux: true
+    ansible_groups:
+      - linux
+      - routers
+    testing:
+      snapshot: false
+      block_internet: false
+    
+    tasks:
+      - name: Update apt cache
+        apt:
+          update_cache: yes
+          cache_valid_time: 3600
+      
+      - name: Install routing packages
+        apt:
+          name:
+            - iptables
+            - iptables-persistent
+          state: present
+      
+      - name: Enable IP forwarding
+        sysctl:
+          name: net.ipv4.ip_forward
+          value: '1'
+          state: present
+          reload: yes
+      
+      - name: Configure NAT for outbound traffic
+        iptables:
+          table: nat
+          chain: POSTROUTING
+          out_interface: eth0
+          jump: MASQUERADE
+      
+      - name: Allow forwarding from internal network
+        iptables:
+          chain: FORWARD
+          in_interface: eth1
+          out_interface: eth0
+          jump: ACCEPT
+      
+      - name: Allow established connections back
+        iptables:
+          chain: FORWARD
+          in_interface: eth0
+          out_interface: eth1
+          ctstate: ESTABLISHED,RELATED
+          jump: ACCEPT
+      
+      - name: Save iptables rules
+        shell: iptables-save > /etc/iptables/rules.v4
+
+  # =============================================================================
+  # KALI LINUX ATTACKER (kali01) - SEPARATE VLAN
+  # =============================================================================
+  - vm_name: "{{ range_id }}-kali-01"
+    hostname: "kali01"
+    template: kali-x64-desktop-template
+    vlan: 99
+    ip_last_octet: 10
+    ram_gb: 4
+    cpus: 2
+    linux: true
+    ansible_groups:
+      - linux
+      - attackers
+    testing:
+      snapshot: false
+      block_internet: false
+    
+    tasks:
+      - name: Update apt cache
+        apt:
+          update_cache: yes
+          cache_valid_time: 3600
+      
+      - name: Install additional pentesting tools
+        apt:
+          name:
+            - metasploit-framework
+            - nmap
+            - burpsuite
+            - bloodhound
+            - crackmapexec
+            - impacket-scripts
+            - responder
+            - enum4linux
+            - smbclient
+            - gobuster
+            - nikto
+            - sqlmap
+            - john
+            - hashcat
+          state: present
+        ignore_errors: yes
+      
+      - name: Create tools directory
+        file:
+          path: /opt/tools
+          state: directory
+          mode: '0755'
+      
+      - name: Clone useful repositories
+        git:
+          repo: "{{ item.repo }}"
+          dest: "{{ item.dest }}"
+        loop:
+          - { repo: "https://github.com/PowerShellMafia/PowerSploit.git", dest: "/opt/tools/PowerSploit" }
+          - { repo: "https://github.com/BloodHoundAD/BloodHound.git", dest: "/opt/tools/BloodHound" }
+        ignore_errors: yes

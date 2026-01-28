@@ -1,0 +1,45 @@
+---
+# Kali Linux Attacker Setup Tasks
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install additional pentesting tools
+  apt:
+    name:
+      - metasploit-framework
+      - nmap
+      - burpsuite
+      - bloodhound
+      - crackmapexec
+      - impacket-scripts
+      - responder
+      - enum4linux
+      - smbclient
+      - gobuster
+      - nikto
+      - sqlmap
+      - john
+      - hashcat
+    state: present
+  ignore_errors: yes
+
+- name: Create tools directory
+  file:
+    path: /opt/tools
+    state: directory
+    mode: '0755'
+
+- name: Clone PowerSploit
+  git:
+    repo: "https://github.com/PowerShellMafia/PowerSploit.git"
+    dest: "/opt/tools/PowerSploit"
+  ignore_errors: yes
+
+- name: Clone BloodHound
+  git:
+    repo: "https://github.com/BloodHoundAD/BloodHound.git"
+    dest: "/opt/tools/BloodHound"
+  ignore_errors: yes

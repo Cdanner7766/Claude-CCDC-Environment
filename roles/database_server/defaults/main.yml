@@ -1,0 +1,4 @@
+---
+# Default variables for database_server role
+
+mysql_root_password: "MySQLR00t!"

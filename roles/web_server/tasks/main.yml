@@ -1,0 +1,51 @@
+---
+# Web Server Setup Tasks
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install Apache web server
+  apt:
+    name:
+      - apache2
+      - php
+      - libapache2-mod-php
+    state: present
+
+- name: Start and enable Apache
+  systemd:
+    name: apache2
+    state: started
+    enabled: yes
+
+- name: Create default web page
+  copy:
+    content: |
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <title>Blue Team CCDC Lab - Web Server</title>
+      </head>
+      <body>
+          <h1>Welcome to the Blue Team CCDC Practice Environment</h1>
+          <p>Web Server: web01.blue.lab</p>
+          <p>This is a training environment for cybersecurity competitions.</p>
+          <?php phpinfo(); ?>
+      </body>
+      </html>
+    dest: /var/www/html/index.php
+
+- name: Configure firewall
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+  loop:
+    - "22"
+    - "80"
+    - "443"
+
+- name: Enable firewall
+  ufw:
+    state: enabled

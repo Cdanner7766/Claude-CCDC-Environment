@@ -1,0 +1,70 @@
+---
+# Domain Controller Setup Tasks
+
+- name: Set static IP address
+  win_shell: |
+    New-NetIPAddress -InterfaceAlias "Ethernet" -IPAddress 10.10.10.10 -PrefixLength 24 -DefaultGateway 10.10.10.1 -ErrorAction SilentlyContinue
+    Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses 127.0.0.1,8.8.8.8
+  ignore_errors: yes
+
+- name: Install AD Domain Services
+  win_feature:
+    name: AD-Domain-Services
+    include_management_tools: yes
+    include_sub_features: yes
+  register: ad_install
+
+- name: Install DNS Server
+  win_feature:
+    name: DNS
+    include_management_tools: yes
+
+- name: Install RSAT Tools
+  win_feature:
+    name:
+      - RSAT-AD-PowerShell
+      - RSAT-AD-AdminCenter
+      - RSAT-ADDS-Tools
+      - RSAT-DNS-Server
+
+- name: Promote to Domain Controller
+  win_domain_controller:
+    dns_domain_name: "{{ domain_name }}"
+    domain_admin_user: "Administrator@{{ domain_name }}"
+    safe_mode_password: "{{ safe_mode_password }}"
+    state: domain_controller
+  register: dc_promotion
+
+- name: Reboot after DC promotion
+  win_reboot:
+    reboot_timeout: 600
+  when: dc_promotion.reboot_required
+
+- name: Wait for Active Directory Web Services
+  win_service:
+    name: ADWS
+    state: started
+  retries: 10
+  delay: 30
+  register: adws_status
+  until: adws_status is succeeded
+
+- name: Create Domain Users
+  win_domain_user:
+    name: "{{ item.name }}"
+    firstname: "{{ item.firstname }}"
+    surname: "{{ item.surname }}"
+    password: "{{ item.password }}"
+    state: present
+    enabled: yes
+    password_never_expires: no
+    user_cannot_change_password: no
+    groups: "{{ item.groups | default(['Domain Users']) }}"
+  loop: "{{ domain_users }}"
+  when: domain_users is defined
+
+- name: Configure DNS Forwarders
+  win_shell: |
+    Add-DnsServerForwarder -IPAddress 8.8.8.8 -ErrorAction SilentlyContinue
+    Add-DnsServerForwarder -IPAddress 8.8.4.4 -ErrorAction SilentlyContinue
+  ignore_errors: yes
